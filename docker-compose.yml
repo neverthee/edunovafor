@@ -1,0 +1,46 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: edunova-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      PYTHONPATH: /app
+      SOFFICE_PATH: /usr/bin/soffice
+      FFMPEG_PATH: /usr/bin/ffmpeg
+    ports:
+      - "127.0.0.1:5001:5001"
+    volumes:
+      - ./backend/database:/app/backend/database
+      - ./backend/uploads:/app/backend/uploads
+      - ./uploads:/app/uploads
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/api/health', timeout=5)"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  frontend:
+    profiles: ["fullstack"]
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: /
+    container_name: edunova-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"

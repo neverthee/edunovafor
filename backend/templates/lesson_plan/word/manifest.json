@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "default": {
+      "template": "official.docx",
+      "description": "Official Word lesson-plan template"
+    },
+    "official": {
+      "template": "official.docx",
+      "description": "Official Word lesson-plan template"
+    }
+  }
+}

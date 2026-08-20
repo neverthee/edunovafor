@@ -1,0 +1,15 @@
+[Unit]
+Description=EduNova Flask Backend
+After=network.target
+
+[Service]
+User=admin
+Group=admin
+WorkingDirectory=/home/admin/project/edunova
+Environment="PATH=/home/admin/project/edunova/venv/bin"
+ExecStart=/home/admin/project/edunova/venv/bin/gunicorn --workers 2 --threads 4 --timeout 720 --bind 127.0.0.1:5001 backend.main:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

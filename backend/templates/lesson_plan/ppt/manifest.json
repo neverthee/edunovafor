@@ -1,0 +1,30 @@
+{
+  "profiles": {
+    "default": {
+      "template": "official.pptx",
+      "target_slide_count": 12,
+      "layout_map": {
+        "cover": 11,
+        "toc": 12,
+        "content_text": 13,
+        "content_img_left": 14,
+        "content_img_right": 15,
+        "summary": 16,
+        "ending": 17
+      }
+    },
+    "official": {
+      "template": "official.pptx",
+      "target_slide_count": 12,
+      "layout_map": {
+        "cover": 11,
+        "toc": 12,
+        "content_text": 13,
+        "content_img_left": 14,
+        "content_img_right": 15,
+        "summary": 16,
+        "ending": 17
+      }
+    }
+  }
+}

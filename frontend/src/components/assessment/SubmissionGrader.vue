@@ -1,0 +1,1241 @@
+<template>
+  <div class="submission-grader max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <!-- 加载状态 -->
+    <div v-if="loading" class="flex justify-center items-center py-10">
+      <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+    </div>
+
+    <div v-else class="space-y-6">
+      <!-- 头部信息 -->
+      <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+        <div class="flex justify-between items-start">
+          <div>
+            <div class="flex items-center gap-3 mb-2">
+              <button 
+                @click="goBack" 
+                class="p-2 bg-white shadow-md rounded-lg hover:bg-gray-50 text-gray-700 flex items-center justify-center" 
+                style="width: 40px; height: 40px;"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                </svg>
+              </button>
+              <h2 class="text-2xl font-bold">{{ assessment.title }}</h2>
+            </div>
+            <p v-if="isReadOnly" class="text-blue-600 font-medium mb-2">查看提交详情</p>
+            <p v-else class="text-blue-600 font-medium mb-2">评分界面</p>
+            <p class="text-gray-600 mb-4">{{ assessment.description }}</p>
+            <div class="flex flex-wrap gap-2 mb-2">
+              <span class="px-3 py-1 rounded-full text-sm bg-gray-100 text-gray-800">
+                {{ assessment.type === 'quiz' ? '测验' : assessment.type === 'exam' ? '考试' : '作业' }}
+              </span>
+              <span class="px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800">
+                总分: {{ assessment.total_score }} 分
+              </span>
+            </div>
+          </div>
+          <div class="text-right">
+            <p class="text-sm text-gray-600">学生: {{ studentName }}</p>
+            <p class="text-sm text-gray-600">提交时间: {{ formatDate(submission.submitted_at) }}</p>
+            <p class="text-sm text-gray-600">当前得分: {{ currentScore }} / {{ assessment.total_score }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 批改进度 -->
+      <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+        <h3 class="text-lg font-semibold mb-4">批改进度</h3>
+        <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+          <div 
+            class="bg-blue-600 h-2.5 rounded-full" 
+            :style="{ width: `${(gradedQuestions / totalQuestions) * 100}%` }"
+          ></div>
+        </div>
+        <div class="flex justify-between text-sm text-gray-600">
+          <span>已批改: {{ gradedQuestions }}/{{ totalQuestions }}</span>
+          <span>待批改: {{ totalQuestions - gradedQuestions }}</span>
+        </div>
+        
+        <!-- AI一键打分按钮 -->
+        <div v-if="!isReadOnly && hasSubjectiveQuestions" class="mt-4 flex justify-end">
+          <button 
+            @click="aiGradeAllSubjective" 
+            class="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+            :disabled="aiGradingAll"
+          >
+            <span v-if="aiGradingAll" class="mr-2">
+              <div class="animate-spin rounded-full h-4 w-4 border-2 border-white"></div>
+            </span>
+            <span>AI 一键打分</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 题目列表 -->
+      <div class="space-y-6">
+        <div v-for="(question, index) in questions" :key="index" class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+          <!-- 题目信息 -->
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-semibold">
+              {{ index + 1 }}. {{ getQuestionTypeText(question.section_type) }}
+              <span class="text-sm text-gray-500 ml-2">({{ question.score }}分)</span>
+            </h3>
+            <div>
+              <span 
+                :class="getQuestionStatusClass(question)"
+                class="px-3 py-1 rounded-full text-sm"
+              >
+                {{ getQuestionStatusText(question) }}
+              </span>
+            </div>
+          </div>
+
+          <!-- 题干 -->
+          <div class="mb-4">
+            <p class="text-lg" v-html="formatQuestionStem(question.stem)"></p>
+            
+            <!-- 选项 (仅对选择题、多选题显示) -->
+            <div v-if="['multiple_choice', 'multiple_select'].includes(question.section_type)" class="mt-3 space-y-2">
+              <div v-for="(option, optionIndex) in question.options" :key="optionIndex"
+                class="flex items-center p-2 rounded"
+                :class="{
+                  'bg-green-50': isOptionCorrect(question, optionIndex),
+                }"
+              >
+                <span class="font-medium mr-2">{{ String.fromCharCode(65 + optionIndex) }}.</span>
+                <span>{{ option }}</span>
+                <span v-if="isOptionCorrect(question, optionIndex)" class="ml-2 text-green-600">✓</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 学生答案 -->
+          <div class="mb-6 p-4 bg-gray-50 rounded-md">
+            <p class="font-medium text-gray-700 mb-2">学生答案:</p>
+            
+            <!-- 选择题答案 -->
+            <div v-if="question.section_type === 'multiple_choice'" class="space-y-3">
+              <div class="flex items-center">
+                <span class="mr-2">选择: </span>
+                <span 
+                  class="px-2 py-1 rounded-md" 
+                  :class="isCorrectChoice(question, studentAnswers[index]) ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                >
+                  {{ studentAnswers[index] }}
+                </span>
+              </div>
+              
+              <!-- 参考答案 -->
+              <div class="mt-3 pt-3 border-t border-gray-200">
+                <p class="font-medium text-sm text-gray-700 mb-1">参考答案:</p>
+                <div class="bg-blue-50 p-2 rounded text-sm">
+                  {{ getCorrectAnswerText(question) }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 多选题答案 -->
+            <div v-else-if="question.section_type === 'multiple_select'" class="space-y-3">
+              <div>
+                <span class="mr-2">选择: </span>
+                <div class="flex flex-wrap gap-1">
+                  <span 
+                    v-for="option in studentAnswers[index]" 
+                    :key="option"
+                    class="px-2 py-1 rounded-md"
+                    :class="isOptionInCorrectAnswer(question, option) ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                  >
+                    {{ option }}
+                  </span>
+                </div>
+              </div>
+              
+              <!-- 参考答案 -->
+              <div class="mt-3 pt-3 border-t border-gray-200">
+                <p class="font-medium text-sm text-gray-700 mb-1">参考答案:</p>
+                <div class="bg-blue-50 p-2 rounded text-sm">
+                  {{ getCorrectAnswerText(question) }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 填空题答案 -->
+            <div v-else-if="question.section_type === 'fill_blank' || question.section_type === 'fill_in_blank'" class="space-y-3">
+              <div class="space-y-2">
+                <div v-if="Array.isArray(studentAnswers[index])">
+                  <div v-for="(blank, blankIndex) in studentAnswers[index]" :key="blankIndex" class="flex items-center">
+                    <span class="mr-2">空白 {{ blankIndex + 1 }}: </span>
+                    <span 
+                      class="px-2 py-1 rounded-md"
+                      :class="isCorrectBlank(question, blank, blankIndex) ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                    >
+                      {{ blank }}
+                    </span>
+                  </div>
+                </div>
+                <div v-else class="flex items-center">
+                  <span class="mr-2">答案: </span>
+                  <span class="px-2 py-1 rounded-md" 
+                    :class="isCorrectBlank(question, studentAnswers[index], 0) ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'">
+                    {{ studentAnswers[index] }}
+                  </span>
+                </div>
+              </div>
+              
+              <!-- 参考答案 -->
+              <div class="mt-3 pt-3 border-t border-gray-200">
+                <p class="font-medium text-sm text-gray-700 mb-1">参考答案:</p>
+                <div class="bg-blue-50 p-2 rounded text-sm">
+                  <div v-if="Array.isArray(question.answer)" class="space-y-1">
+                    <div v-for="(ans, idx) in question.answer" :key="idx">
+                      空白 {{ idx + 1 }}: {{ ans }}
+                    </div>
+                  </div>
+                  <div v-else>
+                    {{ question.answer || question.reference_answer || '无参考答案' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 判断题答案 -->
+            <div v-else-if="question.section_type === 'true_false'" class="space-y-3">
+              <div class="flex items-center">
+                <span class="mr-2">回答: </span>
+                <span 
+                  class="px-2 py-1 rounded-md"
+                  :class="isCorrectTrueFalse(question, studentAnswers[index]) ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                >
+                  {{ studentAnswers[index] === 'true' ? '正确' : '错误' }}
+                </span>
+              </div>
+              
+              <!-- 参考答案 -->
+              <div class="mt-3 pt-3 border-t border-gray-200">
+                <p class="font-medium text-sm text-gray-700 mb-1">参考答案:</p>
+                <div class="bg-blue-50 p-2 rounded text-sm">
+                  {{ question.answer === 'true' ? '正确' : '错误' }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 简答题答案 -->
+            <div v-else-if="question.section_type === 'short_answer' || question.section_type === 'essay'" class="space-y-3">
+              <div class="whitespace-pre-wrap">
+                {{ typeof studentAnswers[index] === 'object' && studentAnswers[index].text ? studentAnswers[index].text : studentAnswers[index] }}
+              </div>
+              
+              <!-- 附件列表 -->
+              <div v-if="typeof studentAnswers[index] === 'object' && studentAnswers[index].files && studentAnswers[index].files.length > 0" class="mt-2">
+                <p class="font-medium text-sm">附件:</p>
+                <ul class="text-sm text-blue-600">
+                  <li v-for="(file, fileIndex) in studentAnswers[index].files" :key="fileIndex" class="mt-1">
+                    <a href="#" class="hover:underline">{{ file.name }}</a>
+                  </li>
+                </ul>
+              </div>
+              
+              <!-- 参考答案 -->
+              <div class="mt-3 pt-3 border-t border-gray-200">
+                <p class="font-medium text-sm text-gray-700 mb-1">参考答案:</p>
+                <div class="bg-blue-50 p-2 rounded text-sm whitespace-pre-wrap">
+                  {{ question.reference_answer || question.answer || '无参考答案' }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 评分区域 (对填空题和主观题显示) -->
+          <div v-if="needsManualGrading(question) || canBeModifiedAfterAutoGrading(question)" class="border-t pt-4">
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-gray-700 mb-1">分数 (最高 {{ question.score }} 分)</label>
+              <div class="flex items-center">
+                <input 
+                  type="number" 
+                  v-model="questionScores[index]" 
+                  class="w-24 px-3 py-2 border rounded-md"
+                  :min="0" 
+                  :max="question.score" 
+                  step="0.5"
+                  :disabled="isReadOnly"
+                  :class="{'bg-gray-100': isReadOnly}"
+                />
+                <span v-if="canBeModifiedAfterAutoGrading(question)" class="ml-2 text-sm text-blue-600">
+                  (系统已自动评分，可修改)
+                </span>
+                
+                <!-- AI打分按钮 (仅对主观题显示) -->
+                <button 
+                  v-if="!isReadOnly && needsManualGrading(question)"
+                  @click="aiGradeQuestion(index)" 
+                  class="ml-3 flex items-center px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm"
+                  :disabled="aiGradingQuestions[index]"
+                >
+                  <span v-if="aiGradingQuestions[index]" class="mr-1">
+                    <div class="animate-spin rounded-full h-3 w-3 border-2 border-white"></div>
+                  </span>
+                  <span>AI 打分</span>
+                </button>
+              </div>
+            </div>
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-gray-700 mb-1">评语</label>
+              <textarea 
+                v-model="questionFeedback[index]" 
+                rows="3" 
+                class="w-full px-3 py-2 border rounded-md"
+                placeholder="输入对此题的评语..."
+                :disabled="isReadOnly"
+                :class="{'bg-gray-100': isReadOnly}"
+              ></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 总体评价 -->
+      <div class="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+        <h3 class="text-lg font-semibold mb-4">总体评价</h3>
+        
+        <!-- 评分配置 -->
+        <div class="mb-6 p-4 bg-gray-50 rounded-md">
+          <h4 class="font-medium text-gray-700 mb-3">评分配置</h4>
+          
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- 分数上限 -->
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">分数上限</label>
+              <div class="flex items-center">
+                <input 
+                  type="number" 
+                  v-model="scoreLimit" 
+                  class="w-24 px-3 py-2 border rounded-md"
+                  :min="0"
+                  step="1"
+                  :disabled="isReadOnly || !enableScoreLimit"
+                  :class="{'bg-gray-100': isReadOnly || !enableScoreLimit}"
+                />
+                <span class="ml-2 text-gray-500">分</span>
+                <div class="ml-4 flex items-center">
+                  <input 
+                    type="checkbox" 
+                    id="enable-score-limit" 
+                    v-model="enableScoreLimit"
+                    class="h-4 w-4 text-blue-600 rounded border-gray-300"
+                    :disabled="isReadOnly"
+                  />
+                  <label for="enable-score-limit" class="ml-2 text-sm text-gray-700">启用上限</label>
+                </div>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">默认为100分</p>
+            </div>
+            
+            <!-- 分数精度 -->
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">分数精度</label>
+              <select 
+                v-model="scorePrecision" 
+                class="w-full px-3 py-2 border rounded-md"
+                :disabled="isReadOnly"
+                :class="{'bg-gray-100': isReadOnly}"
+              >
+                <option value="1">整数 (1分)</option>
+                <option value="0.5">半分 (0.5分)</option>
+                <option value="0.1">小数 (0.1分)</option>
+                <option value="0.01">精确小数 (0.01分)</option>
+              </select>
+            </div>
+            
+            <!-- 自动按比例计算 -->
+            <div class="flex flex-col">
+              <label class="block text-sm font-medium text-gray-700 mb-1">自动按比例计算总分</label>
+              <div class="flex items-center h-10">
+                <button 
+                  @click="autoScaleScore" 
+                  class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:bg-gray-300"
+                  :disabled="isReadOnly || autoScaling || !enableScoreLimit"
+                >
+                  <span v-if="autoScaling" class="mr-2">
+                    <div class="animate-spin rounded-full h-4 w-4 border-2 border-white"></div>
+                  </span>
+                  <span>应用</span>
+                </button>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">仅调整最终总分，不修改各题分数</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">总分</label>
+          <div class="flex items-center">
+            <input 
+              type="number" 
+              v-model="totalScore" 
+              class="w-24 px-3 py-2 border rounded-md"
+              :min="0" 
+              :max="enableScoreLimit ? scoreLimit : undefined" 
+              :step="scorePrecision"
+              :disabled="isReadOnly"
+              :class="{'bg-gray-100': isReadOnly}"
+            />
+            <span class="ml-2 text-gray-500">
+              <template v-if="enableScoreLimit">/ {{ scoreLimit }}</template>
+              <template v-else>(原始总分: {{ rawTotalScore }} / {{ assessment.total_score }})</template>
+            </span>
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">总体反馈</label>
+          <textarea 
+            v-model="overallFeedback" 
+            rows="4" 
+            class="w-full px-3 py-2 border rounded-md"
+            placeholder="输入对整体评估的反馈..."
+            :disabled="isReadOnly"
+            :class="{'bg-gray-100': isReadOnly}"
+          ></textarea>
+        </div>
+      </div>
+
+      <!-- 操作按钮 -->
+      <div class="flex justify-end space-x-4">
+        <button 
+          @click="goBack" 
+          class="px-4 py-2 border rounded-md hover:bg-gray-50"
+        >
+          返回
+        </button>
+        <button 
+          v-if="!isReadOnly"
+          @click="saveGrading" 
+          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+        >
+          保存评分
+        </button>
+      </div>
+    </div>
+    
+    <!-- 全局通知容器 -->
+    <NotificationContainer />
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, watch } from 'vue';
+import axios from 'axios';
+import { useRoute, useRouter } from 'vue-router';
+import assessmentAPI from '@/api/assessmentAPI';
+import notificationService from '../../services/notificationService';
+import NotificationContainer from '../NotificationContainer.vue';
+
+const props = defineProps({
+  submissionId: {
+    type: [Number, String],
+    required: true
+  },
+  readOnly: {
+    type: Boolean,
+    default: false
+  }
+});
+
+const router = useRouter();
+const route = useRoute();
+// 检查URL参数中是否有readOnly=true
+const isReadOnly = computed(() => props.readOnly || route.query.readOnly === 'true');
+
+// 状态变量
+const loading = ref(true);
+const assessment = ref({});
+const submission = ref({});
+const studentName = ref('');
+const questions = ref([]);
+const studentAnswers = ref([]);
+const questionScores = ref([]);
+const questionFeedback = ref([]);
+const overallFeedback = ref('');
+const totalScore = ref(0);
+
+// 评分配置
+const scoreLimit = ref(100); // 默认100分
+const scorePrecision = ref('0.5');
+const autoScaling = ref(false);
+const enableScoreLimit = ref(false); // 默认不启用上限
+const rawTotalScore = ref(0); // 原始总分（未调整）
+
+// AI评分状态
+const aiGradingAll = ref(false);
+const aiGradingQuestions = ref([]);
+
+// 计算属性
+const gradedQuestions = computed(() => {
+  // 计算已批改的题目数量（有分数的题目或自动评分的题目）
+  return questions.value.reduce((count, question, index) => {
+    // 如果是需要手动评分的题目，检查是否有分数
+    if (needsManualGrading(question)) {
+      return (questionScores.value[index] > 0) ? count + 1 : count;
+    } else {
+      // 客观题自动评分，算作已批改
+      return count + 1;
+    }
+  }, 0);
+});
+
+const totalQuestions = computed(() => {
+  return questions.value.length;
+});
+
+const currentScore = computed(() => {
+  return totalScore.value || 0;
+});
+
+const hasSubjectiveQuestions = computed(() => {
+  return questions.value.some(q => needsManualGrading(q));
+});
+
+// 方法
+const formatDate = (dateString) => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  return date.toLocaleString();
+};
+
+const getQuestionTypeText = (type) => {
+  const typeMap = {
+    'multiple_choice': '选择题',
+    'multiple_select': '多选题',
+    'fill_in_blank': '填空题',
+    'fill_blank': '填空题',
+    'true_false': '判断题',
+    'short_answer': '简答题',
+    'essay': '论述题'
+  };
+  return typeMap[type] || type;
+};
+
+const needsManualGrading = (question) => {
+  return ['short_answer', 'essay'].includes(question.section_type);
+};
+
+const canBeModifiedAfterAutoGrading = (question) => {
+  return ['fill_blank', 'fill_in_blank'].includes(question.section_type);
+};
+
+const getQuestionStatusClass = (question) => {
+  const index = questions.value.indexOf(question);
+  if (index === -1) return '';
+  
+  const score = questionScores.value[index];
+  
+  if (score === undefined || score === null) return 'bg-gray-100 text-gray-800';
+  if (needsManualGrading(question)) {
+    return score > 0 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+  } else if (canBeModifiedAfterAutoGrading(question)) {
+    return 'bg-blue-100 text-blue-800 cursor-pointer';
+  } else {
+    // 客观题
+    return 'bg-blue-100 text-blue-800';
+  }
+};
+
+const getQuestionStatusText = (question) => {
+  const index = questions.value.indexOf(question);
+  if (index === -1) return '';
+  
+  const score = questionScores.value[index];
+  
+  if (score === undefined || score === null) return '未评分';
+  if (needsManualGrading(question)) {
+    return score > 0 ? '已评分' : '未评分';
+  } else if (canBeModifiedAfterAutoGrading(question)) {
+    return '自动评分 (可修改)';
+  } else {
+    // 客观题
+    return '自动评分';
+  }
+};
+
+const formatQuestionStem = (stem) => {
+  if (!stem) return '';
+  // 将填空题的下划线替换为可见的空白
+  return stem.replace(/_{3,}/g, '<span class="border-b-2 border-gray-400 inline-block min-w-20">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>');
+};
+
+const isCorrectChoice = (question, answer) => {
+  if (!question.answer) return false;
+  
+  // 处理不同格式的答案
+  if (typeof question.answer === 'number') {
+    const correctOption = String.fromCharCode(65 + question.answer);
+    return answer === correctOption;
+  } else {
+    return answer === question.answer;
+  }
+};
+
+const isOptionInCorrectAnswer = (question, option) => {
+  if (!question.answer || !Array.isArray(question.answer)) return false;
+  
+  // 处理不同格式的答案
+  const correctOptions = question.answer.map(ans => {
+    if (typeof ans === 'number') {
+      return String.fromCharCode(65 + ans);
+    }
+    return ans;
+  });
+  
+  return correctOptions.includes(option);
+};
+
+const isCorrectBlank = (question, answer, index) => {
+  if (!question.answer) return false;
+  
+  if (Array.isArray(question.answer)) {
+    if (index >= question.answer.length) return false;
+    
+    // 检查答案是否匹配（不区分大小写和前后空白）
+    const studentAnswer = String(answer || '').toLowerCase().trim();
+    const correctAnswer = String(question.answer[index] || '').toLowerCase().trim();
+    
+    return studentAnswer === correctAnswer;
+  } else {
+    // 如果答案不是数组，但有单个答案
+    const studentAnswer = String(answer || '').toLowerCase().trim();
+    const correctAnswer = String(question.answer || '').toLowerCase().trim();
+    
+    return studentAnswer === correctAnswer;
+  }
+};
+
+const isCorrectTrueFalse = (question, answer) => {
+  if (!question.answer) return false;
+  return String(answer).toLowerCase() === String(question.answer).toLowerCase();
+};
+
+const isOptionCorrect = (question, optionIndex) => {
+  if (!question.answer) return false;
+  
+  if (question.section_type === 'multiple_choice') {
+    // 单选题
+    if (typeof question.answer === 'number') {
+      return optionIndex === question.answer;
+    } else if (typeof question.answer === 'string') {
+      const letterOption = String.fromCharCode(65 + optionIndex);
+      return question.answer === letterOption;
+    }
+  } else if (question.section_type === 'multiple_select') {
+    // 多选题
+    if (Array.isArray(question.answer)) {
+      if (question.answer.every(ans => typeof ans === 'number')) {
+        return question.answer.includes(optionIndex);
+      } else {
+        const letterOption = String.fromCharCode(65 + optionIndex);
+        return question.answer.includes(letterOption);
+      }
+    }
+  }
+  
+  return false;
+};
+
+const getCorrectAnswerText = (question) => {
+  if (!question.answer && !question.reference_answer) return '无答案';
+  
+  // 优先使用reference_answer字段（用于主观题）
+  if (question.reference_answer) {
+    return String(question.reference_answer);
+  }
+  
+  if (question.section_type === 'multiple_choice') {
+    if (typeof question.answer === 'number') {
+      return String.fromCharCode(65 + question.answer);
+    } else if (typeof question.answer === 'string' && /^[A-Z]$/.test(question.answer)) {
+      return question.answer;
+    }
+    return String(question.answer);
+  } else if (question.section_type === 'multiple_select') {
+    if (Array.isArray(question.answer)) {
+      return question.answer.map(ans => {
+        if (typeof ans === 'number') {
+          return String.fromCharCode(65 + ans);
+        } else if (typeof ans === 'string' && /^[A-Z]$/.test(ans)) {
+          return ans;
+        }
+        return ans;
+      }).join(', ');
+    }
+    return String(question.answer);
+  } else if (question.section_type === 'true_false') {
+    return question.answer === 'true' ? '正确' : '错误';
+  } else {
+    return String(question.answer);
+  }
+};
+
+const getCorrectBlankAnswer = (question, index) => {
+  if (!question.answer) return '';
+  
+  if (Array.isArray(question.answer)) {
+    if (index >= question.answer.length) return '';
+    return question.answer[index];
+  } else {
+    return question.answer;
+  }
+};
+
+const goBack = () => {
+  // 获取当前用户角色
+  const userRole = 'teacher'; // 这里应该从authStore获取，但为简化直接使用teacher
+  
+  // 返回到教师工作台的评估测试页面
+  router.push({ 
+    path: `/${userRole}`, 
+    query: { activeTab: 'assessments' } 
+  });
+};
+
+// 获取提交数据
+const fetchSubmission = async () => {
+  try {
+    loading.value = true;
+    
+    console.log('Fetching submission with ID:', props.submissionId);
+    const response = await assessmentAPI.getSubmission(props.submissionId);
+    
+    console.log('Submission data:', response);
+    
+    // 设置提交数据
+    if (response) {
+      submission.value = response;
+      
+      // 设置学生名称
+      studentName.value = response.student_name || `学生 ${response.student_id}`;
+      
+      // 设置评估数据
+      if (response.assessment) {
+        assessment.value = response.assessment;
+        // 设置默认分数上限为100分，但不启用
+        scoreLimit.value = 100;
+        enableScoreLimit.value = false;
+      } else {
+        // 如果提交中没有包含评估数据，则需要单独获取
+        try {
+          const assessmentResponse = await assessmentAPI.getAssessment(response.assessment_id);
+          assessment.value = assessmentResponse;
+          // 设置默认分数上限为100分，但不启用
+          scoreLimit.value = 100;
+          enableScoreLimit.value = false;
+        } catch (assessmentError) {
+          console.error('获取评估数据失败:', assessmentError);
+        }
+      }
+      
+      // 解析题目和答案
+      parseQuestionsAndAnswers(response);
+      
+      // 设置总分
+      totalScore.value = response.score !== null ? response.score : 0;
+      // 设置原始总分
+      rawTotalScore.value = questionScores.value.reduce((sum, score) => sum + (score || 0), 0);
+      
+      // 设置整体评价
+      overallFeedback.value = response.feedback || '';
+    }
+  } catch (error) {
+    console.error('获取提交数据失败:', error);
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 解析题目和答案
+const parseQuestionsAndAnswers = (submissionData) => {
+  // 解析题目
+  if (assessment.value && assessment.value.questions) {
+    let assessmentQuestions;
+    try {
+      assessmentQuestions = Array.isArray(assessment.value.questions) 
+        ? assessment.value.questions 
+        : JSON.parse(assessment.value.questions);
+    } catch (error) {
+      console.error('解析问题JSON失败:', error);
+      assessmentQuestions = [];
+    }
+    
+    console.log('评估问题原始数据:', assessmentQuestions);
+    
+    // 处理题目数据
+    const parsedQuestions = [];
+    
+    // 将问题转换为统一格式
+    if (assessmentQuestions) {
+      if (Array.isArray(assessmentQuestions)) {
+        // 如果直接是问题数组
+        assessmentQuestions.forEach(q => {
+          console.log('问题对象:', q);
+          console.log('问题答案:', q.answer);
+          
+          // 确保answer字段存在，对于主观题，为每个题目设置默认参考答案
+          let answer = q.answer;
+          let reference_answer = q.reference_answer;
+          
+          // 处理题型
+          let questionType = q.type || q.section_type || 'multiple_choice';
+          
+          // 标准化题型命名
+          if (questionType === 'fill_in_blank') questionType = 'fill_blank';
+          if (questionType === 'essay') questionType = 'short_answer'; // 论述题当作简答题处理
+          
+          // 如果有reference_answer但没有answer，使用reference_answer作为answer
+          if ((!answer || answer === '') && reference_answer) {
+            answer = reference_answer;
+          }
+          
+          // 如果既没有answer也没有reference_answer，设置默认值
+          if (answer === undefined || answer === null || (answer === '' && questionType !== 'short_answer')) {
+            if (['short_answer', 'essay'].includes(questionType)) {
+              // 对于主观题，设置默认的参考答案提示 - 不再设置为false
+              reference_answer = reference_answer || '教师未提供参考答案';
+              answer = answer || reference_answer;
+            } else if (questionType === 'multiple_choice' && q.options && q.options.length > 0) {
+              // 对于选择题，使用第一个选项作为默认答案
+              answer = 'A';
+            } else if (questionType === 'multiple_select' && q.options && q.options.length > 0) {
+              // 对于多选题，使用前两个选项作为默认答案
+              answer = ['A', 'B'];
+            } else if (questionType === 'true_false') {
+              // 对于判断题，默认为"正确"
+              answer = 'true';
+            } else if (questionType === 'fill_blank' || questionType === 'fill_in_blank') {
+              // 对于填空题，根据stem中的空白数量设置默认答案
+              const stem = q.stem || q.question || '';
+              const blankCount = (stem.match(/_{3,}/g) || []).length || 1;
+              answer = Array(blankCount).fill('未提供参考答案');
+            }
+          }
+          
+          parsedQuestions.push({
+            ...q,
+            answer: answer, // 确保answer字段存在
+            reference_answer: reference_answer || answer, // 确保reference_answer字段存在
+            section_type: questionType,
+            score: q.score || (assessment.value.total_score / assessmentQuestions.length)
+          });
+        });
+      } else if (assessmentQuestions.sections) {
+        // 如果是带sections的新格式
+        assessmentQuestions.sections.forEach(section => {
+          section.questions.forEach(q => {
+            console.log('段落问题对象:', q);
+            console.log('段落问题答案:', q.answer);
+            
+            // 确保answer字段存在，对于主观题，为每个题目设置默认参考答案
+            let answer = q.answer;
+            let reference_answer = q.reference_answer;
+            
+            // 处理题型
+            let questionType = q.type || section.type || 'multiple_choice';
+            
+            // 标准化题型命名
+            if (questionType === 'fill_in_blank') questionType = 'fill_blank';
+            if (questionType === 'essay') questionType = 'short_answer'; // 论述题当作简答题处理
+            
+            // 如果有reference_answer但没有answer，使用reference_answer作为answer
+            if ((!answer || answer === '') && reference_answer) {
+              answer = reference_answer;
+            }
+            
+            // 如果既没有answer也没有reference_answer，设置默认值
+            if (answer === undefined || answer === null || (answer === '' && questionType !== 'short_answer')) {
+              if (['short_answer', 'essay'].includes(questionType)) {
+                // 对于主观题，设置默认的参考答案提示 - 不再设置为false
+                reference_answer = reference_answer || '教师未提供参考答案';
+                answer = answer || reference_answer;
+              } else if (questionType === 'multiple_choice' && q.options && q.options.length > 0) {
+                // 对于选择题，使用第一个选项作为默认答案
+                answer = 'A';
+              } else if (questionType === 'multiple_select' && q.options && q.options.length > 0) {
+                // 对于多选题，使用前两个选项作为默认答案
+                answer = ['A', 'B'];
+              } else if (questionType === 'true_false') {
+                // 对于判断题，默认为"正确"
+                answer = 'true';
+              } else if (questionType === 'fill_blank' || questionType === 'fill_in_blank') {
+                // 对于填空题，根据stem中的空白数量设置默认答案
+                const stem = q.stem || q.question || '';
+                const blankCount = (stem.match(/_{3,}/g) || []).length || 1;
+                answer = Array(blankCount).fill('未提供参考答案');
+              }
+            }
+            
+            parsedQuestions.push({
+              ...q,
+              answer: answer, // 确保answer字段存在
+              reference_answer: reference_answer || answer, // 确保reference_answer字段存在
+              section_type: questionType,
+              score: q.score || section.score_per_question || (assessment.value.total_score / section.questions.length)
+            });
+          });
+        });
+      }
+    }
+    
+    questions.value = parsedQuestions;
+    console.log('解析后的问题:', questions.value);
+  }
+  
+  // 解析答案
+  if (submissionData.answers) {
+    try {
+      // 答案可能是字符串或已解析的对象
+      const parsedAnswers = typeof submissionData.answers === 'string' 
+        ? JSON.parse(submissionData.answers) 
+        : submissionData.answers;
+      
+      studentAnswers.value = parsedAnswers;
+    } catch (error) {
+      console.error('解析答案失败:', error);
+      studentAnswers.value = [];
+    }
+  }
+  
+  // 初始化题目分数和反馈
+  if (submissionData.question_scores) {
+    try {
+      const scores = typeof submissionData.question_scores === 'string'
+        ? JSON.parse(submissionData.question_scores)
+        : submissionData.question_scores;
+      
+      questionScores.value = scores;
+    } catch (error) {
+      console.error('解析题目分数失败:', error);
+      // 初始化为零分数组
+      questionScores.value = questions.value.map(() => 0);
+    }
+  } else {
+    // 初始化为零分数组
+    questionScores.value = questions.value.map(() => 0);
+  }
+
+  // 初始化AI评分状态
+  aiGradingQuestions.value = questions.value.map(() => false);
+
+  // 自动评分填空题
+  autoGradeFillInBlankQuestions();
+  
+  if (submissionData.question_feedback) {
+    try {
+      const feedback = typeof submissionData.question_feedback === 'string'
+        ? JSON.parse(submissionData.question_feedback)
+        : submissionData.question_feedback;
+      
+      questionFeedback.value = feedback;
+    } catch (error) {
+      console.error('解析题目反馈失败:', error);
+      // 初始化为空反馈数组
+      questionFeedback.value = questions.value.map(() => '');
+    }
+  } else {
+    // 初始化为空反馈数组
+    questionFeedback.value = questions.value.map(() => '');
+  }
+};
+
+// 自动评分填空题
+const autoGradeFillInBlankQuestions = () => {
+  questions.value.forEach((question, index) => {
+    if ((question.section_type === 'fill_blank' || question.section_type === 'fill_in_blank') && 
+        questionScores.value[index] === 0) {
+      
+      const studentAnswer = studentAnswers.value[index];
+      const correctAnswer = question.answer;
+      
+      // 检查答案是否正确
+      let isCorrect = false;
+      let partialCorrect = 0;
+      
+      if (Array.isArray(correctAnswer) && Array.isArray(studentAnswer)) {
+        // 多个填空的情况
+        const totalBlanks = correctAnswer.length;
+        let correctBlanks = 0;
+        
+        for (let i = 0; i < totalBlanks; i++) {
+          if (i < studentAnswer.length) {
+            const correct = String(correctAnswer[i] || '').toLowerCase().trim();
+            const student = String(studentAnswer[i] || '').toLowerCase().trim();
+            
+            if (correct === student) {
+              correctBlanks++;
+            }
+          }
+        }
+        
+        partialCorrect = correctBlanks / totalBlanks;
+        isCorrect = correctBlanks === totalBlanks;
+      } else if (!Array.isArray(correctAnswer) && !Array.isArray(studentAnswer)) {
+        // 单个填空的情况
+        const correct = String(correctAnswer || '').toLowerCase().trim();
+        const student = String(studentAnswer || '').toLowerCase().trim();
+        
+        isCorrect = correct === student;
+        partialCorrect = isCorrect ? 1 : 0;
+      }
+      
+      // 设置分数
+      if (isCorrect) {
+        questionScores.value[index] = question.score;
+      } else if (partialCorrect > 0) {
+        // 部分正确，按比例给分，四舍五入到最近的0.5分
+        const rawScore = question.score * partialCorrect;
+        // 将分数四舍五入到最近的0.5
+        questionScores.value[index] = Math.round(rawScore * 2) / 2;
+      } else {
+        questionScores.value[index] = 0;
+      }
+      
+      // 添加自动评分反馈
+      if (isCorrect) {
+        questionFeedback.value[index] = '答案完全正确';
+      } else if (partialCorrect > 0) {
+        questionFeedback.value[index] = `部分正确 (${Math.round(partialCorrect * 100)}%)`;
+      } else {
+        questionFeedback.value[index] = '答案不正确';
+      }
+    }
+  });
+  
+  // 更新总分
+  updateTotalScore();
+};
+
+const updateTotalScore = () => {
+  const sum = questionScores.value.reduce((sum, score) => sum + (score || 0), 0);
+  // 将总分四舍五入到最近的0.5
+  totalScore.value = Math.round(sum * 2) / 2;
+};
+
+// AI一键打分
+const aiGradeAllSubjective = async () => {
+  if (aiGradingAll.value) return;
+  aiGradingAll.value = true;
+  try {
+    // 准备所有主观题的数据
+    const subjectiveQuestions = questions.value
+      .map((question, idx) => {
+        if (needsManualGrading(question)) {
+          return {
+            index: idx,
+            question: question,
+            student_answer: studentAnswers.value[idx],
+            max_score: question.score
+          };
+        }
+        return null;
+      })
+      .filter(q => q !== null);
+
+    const response = await assessmentAPI.aiGradeAllSubjective(props.submissionId, subjectiveQuestions);
+    console.log('AI一键打分响应:', response);
+    
+    if (response && response.question_scores) {
+      // 更新分数和反馈
+      response.question_scores.forEach((score, idx) => {
+        if (score !== null && idx < questionScores.value.length) {
+          questionScores.value[idx] = score;
+        }
+      });
+      
+      if (response.question_feedback) {
+        response.question_feedback.forEach((feedback, idx) => {
+          if (feedback && idx < questionFeedback.value.length) {
+            questionFeedback.value[idx] = feedback;
+          }
+        });
+      }
+      
+      // 如果返回了总分，直接使用
+      if (response.total_score !== undefined) {
+        totalScore.value = response.total_score;
+      } else {
+        // 否则重新计算总分
+        updateTotalScore();
+      }
+      
+      notificationService.success('批量评分完成', '所有主观题已由AI完成评分');
+    } else {
+      notificationService.error('AI一键打分失败', 'AI一键打分失败或无有效数据');
+    }
+  } catch (error) {
+    console.error('AI一键打分失败:', error);
+    notificationService.error('AI一键打分失败', 'AI一键打分失败，请重试');
+  } finally {
+    aiGradingAll.value = false;
+  }
+};
+
+// AI单独打分
+const aiGradeQuestion = async (index) => {
+  if (aiGradingQuestions.value[index]) return;
+  aiGradingQuestions.value[index] = true;
+  try {
+    const question = questions.value[index];
+    const questionData = {
+      question: question,
+      student_answer: studentAnswers.value[index],
+      max_score: question.score
+    };
+
+    const response = await assessmentAPI.aiGradeQuestion(props.submissionId, index, questionData);
+    console.log('AI单独打分响应:', response);
+    
+    if (response && response.status === 'success') {
+      // 优先使用返回的score字段
+      if (response.score !== undefined) {
+        questionScores.value[index] = response.score;
+      }
+      
+      // 使用返回的feedback字段作为评语
+      if (response.feedback) {
+        questionFeedback.value[index] = response.feedback;
+      }
+      
+      // 更新总分
+      updateTotalScore();
+      notificationService.success(`题目 ${index + 1} 已由AI自动评分`);
+    } else {
+      notificationService.error('AI单独打分失败', 'AI单独打分失败或无有效数据');
+    }
+  } catch (error) {
+    console.error('AI单独打分失败:', error);
+    notificationService.error('AI单独打分失败', 'AI单独打分失败，请重试');
+  } finally {
+    aiGradingQuestions.value[index] = false;
+  }
+};
+
+// 自动按比例计算总分（仅调整最终总分，不修改各题分数）
+const autoScaleScore = async () => {
+  if (autoScaling.value || !enableScoreLimit.value) return;
+  autoScaling.value = true;
+  
+  try {
+    // 获取当前原始总分
+    const currentTotalRaw = questionScores.value.reduce((sum, score) => sum + (score || 0), 0);
+    rawTotalScore.value = currentTotalRaw;
+    
+    if (currentTotalRaw <= 0) {
+      notificationService.warning('无法计算', '当前没有任何评分，无法按比例计算');
+      return;
+    }
+    
+    // 目标总分
+    const targetTotal = parseFloat(scoreLimit.value);
+    if (!targetTotal) {
+      notificationService.warning('无法计算', '请设置有效的分数上限');
+      return;
+    }
+    
+    // 计算比例并应用到总分
+    const ratio = targetTotal / currentTotalRaw;
+    const precision = parseFloat(scorePrecision.value);
+    
+    // 仅调整最终总分
+    const scaledTotal = currentTotalRaw * ratio;
+    totalScore.value = Math.round(scaledTotal / precision) * precision;
+    
+    notificationService.success('总分已调整', `总分已按比例调整至 ${totalScore.value} 分`);
+  } catch (error) {
+    console.error('按比例计算总分失败:', error);
+    notificationService.error('计算失败', '按比例计算总分失败，请重试');
+  } finally {
+    autoScaling.value = false;
+  }
+};
+
+// 根据精度四舍五入分数
+const roundScoreByPrecision = (score) => {
+  if (!score) return 0;
+  const precision = parseFloat(scorePrecision.value);
+  return Math.round(score / precision) * precision;
+};
+
+// 保存评分
+const saveGrading = async () => {
+  try {
+    // 准备提交数据
+    const precision = parseFloat(scorePrecision.value);
+    const roundedScores = questionScores.value.map(score => {
+      if (!score) return 0;
+      // 根据设置的精度四舍五入
+      return Math.round(score / precision) * precision;
+    });
+    
+    // 根据设置的精度四舍五入总分
+    const roundedTotalScore = Math.round(totalScore.value / precision) * precision;
+    
+    const gradingData = {
+      score: roundedTotalScore,
+      feedback: overallFeedback.value,
+      question_scores: roundedScores,
+      question_feedback: questionFeedback.value,
+      grader_id: 1 // 应该从用户状态获取
+    };
+    
+    console.log('Saving grading:', gradingData);
+    
+    // 调用API提交评分
+    const response = await assessmentAPI.gradeSubmission(props.submissionId, gradingData);
+    
+    console.log('Grading response:', response);
+    
+    // 显示成功消息
+    notificationService.success('评分已保存', '学生成绩已成功更新');
+    
+    // 返回提交列表
+    goBack();
+  } catch (error) {
+    console.error('保存评分失败:', error);
+    notificationService.error('保存评分失败', '评分保存失败，请重试');
+  }
+};
+
+// 监听题目评分变化，自动更新总分
+watch(questionScores, (newScores) => {
+  // 计算总分并根据精度四舍五入
+  const sum = newScores.reduce((sum, score) => sum + (score || 0), 0);
+  rawTotalScore.value = sum; // 保存原始总分
+  
+  // 如果启用了分数上限，则应用比例调整
+  if (enableScoreLimit.value && scoreLimit.value > 0) {
+    const ratio = scoreLimit.value / assessment.value.total_score;
+    const adjustedSum = sum * ratio;
+    const precision = parseFloat(scorePrecision.value);
+    totalScore.value = Math.round(adjustedSum / precision) * precision;
+  } else {
+    // 否则使用原始总分
+    const precision = parseFloat(scorePrecision.value);
+    totalScore.value = Math.round(sum / precision) * precision;
+  }
+}, { deep: true });
+
+// 监听精度变化，重新计算所有分数
+watch(scorePrecision, (newPrecision) => {
+  const precision = parseFloat(newPrecision);
+  
+  // 重新计算每个题目的分数
+  questionScores.value = questionScores.value.map(score => {
+    if (!score) return 0;
+    return Math.round(score / precision) * precision;
+  });
+  
+  // 重新计算总分
+  const sum = questionScores.value.reduce((sum, score) => sum + (score || 0), 0);
+  totalScore.value = Math.round(sum / precision) * precision;
+});
+
+// 组件挂载时获取数据
+onMounted(() => {
+  fetchSubmission();
+});
+</script> 
