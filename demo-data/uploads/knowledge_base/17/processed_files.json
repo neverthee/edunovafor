@@ -1,0 +1,20 @@
+{
+  "\u9ad8\u4e2d\u5316\u5b66\u8bd5\u9898\u9898\u5e93\u9009\u4fee\u4e00\u53ca\u7b54\u6848.docx": {
+    "hash": "38ac947ee5c5fe95aa1ac55bace2d887",
+    "processed_at": 1777294411,
+    "chunks": 156,
+    "purpose": "lesson_plan"
+  },
+  "\u9ad8\u4e2d\u5316\u5b66\u8bd5\u9898\u9898\u5e93\u9009\u4fee\u4e00\u53ca\u7b54\u6848.doc": {
+    "hash": "7ad3550ece6b4a1b2e3803fb62060ca4",
+    "processed_at": 1777294366,
+    "chunks": 19,
+    "purpose": "lesson_plan"
+  },
+  "\u5316\u5b66\u9009\u4fee\u4e00\u77e5\u8bc6\u70b9\u603b\u7ed3.docx": {
+    "hash": "af23933fbeffc1ab2b1f51889f1f6271",
+    "processed_at": 1777356595,
+    "chunks": 109,
+    "purpose": "lesson_plan"
+  }
+}
